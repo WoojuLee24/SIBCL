@@ -6,7 +6,8 @@
 
 # NOTE:
 # You need to provide a key
-keys = ['**your key**']
+# keys = ['**your key**']
+keys = ['AIzaSyDNBScfkqTlt59jeDGsVXlVNSvDpkiKrRs']
 
 import requests
 from io import BytesIO
@@ -15,7 +16,10 @@ import time
 from PIL import Image as PILI
 import numpy as np
 
-root_dir = "your kitti dir"
+# root_dir = "/ws/data/kitti-vo"
+# satmap_dir = 'satmap_18'
+# grdimage_dir = 'raw_data'
+root_dir = "/media/TrainDataset/kitti-vo"
 satmap_dir = 'satmap_18'
 grdimage_dir = 'raw_data'
 

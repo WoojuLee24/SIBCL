@@ -110,7 +110,11 @@ class TwoViewRefiner(BaseModel):
 
             p2D_query, visible = cam_q.world2image(data['query']['T_w2cam']*p3D_query)
             F_q, mask, _ = opt.interpolator(F_q, p2D_query)
+            # debug
+            # from pixloc.pixlib.geometry import interpolation
+            # F_q, mask, _ = interpolation.interpolate_tensor(F_q, p2D_query, mode='linear', pad=4, return_gradients=False)
             mask &= visible
+
 
             W_q = pred['query']['confidences'][i]
             W_q, _, _ = opt.interpolator(W_q, p2D_query)

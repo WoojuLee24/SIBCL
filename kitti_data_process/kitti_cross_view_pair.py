@@ -6,7 +6,7 @@ import os
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
-root = "your kitti dir"
+root = "/ws/data/kitti-vo"
 grdimage_dir = 'raw_data'
 oxts_dir = 'oxts/data'
 zoom = 18

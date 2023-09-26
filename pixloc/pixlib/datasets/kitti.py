@@ -20,7 +20,7 @@ import random
 import cv2
 from pixloc.pixlib.geometry import Camera, Pose
 
-root_dir = "/data/dataset/Kitti" # your kitti dir
+root_dir = "/ws/data/kitti-vo" # your kitti dir
 satmap_zoom = 18 
 satmap_dir = 'satmap_'+str(satmap_zoom)
 grdimage_dir = 'raw_data'
@@ -300,9 +300,9 @@ class _Dataset(Dataset):
         # debug
         if 0:
             image = transforms.functional.to_pil_image(grd_left, mode='RGB')
-            image.save('grd.png')
+            image.save('/ws/external/debug_images/grd.png')
             image = transforms.functional.to_pil_image(sat_map, mode='RGB')
-            image.save('sat.png')
+            image.save('/ws/external/debug_images/sat.png')
         if 0:
             fig = plt.figure(figsize=plt.figaspect(0.5))
             ax1 = fig.add_subplot(1, 2, 1)

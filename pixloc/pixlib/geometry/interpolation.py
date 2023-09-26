@@ -4,7 +4,7 @@ import numpy as np
 from typing import Tuple
 
 
-@torch.jit.script
+# @torch.jit.script
 def interpolate_tensor_bicubic(tensor, pts, return_gradients: bool = False):
     # According to R. Keys "Cubic convolution interpolation for digital image processing".
     # references:
@@ -54,7 +54,7 @@ def interpolate_tensor_bicubic(tensor, pts, return_gradients: bool = False):
     return interp, J_out_xy
 
 
-@torch.jit.script
+# @torch.jit.script
 def interpolate_tensor_bilinear(tensor, pts, return_gradients: bool = False):
     if tensor.dim() == 3:
         assert pts.dim() == 2
@@ -62,14 +62,14 @@ def interpolate_tensor_bilinear(tensor, pts, return_gradients: bool = False):
         tensor, pts = tensor[None], pts[None]
     else:
         batched = True
-
     b, c, h, w = tensor.shape
     scale = torch.tensor([w-1, h-1]).to(pts)
     pts = (pts / scale) * 2 - 1
     pts = pts.clamp(min=-2, max=2)  # ideally use the mask instead
     interpolated = torch.nn.functional.grid_sample(
             tensor, pts[:, None], mode='bilinear', align_corners=True)
-    interpolated = interpolated.reshape(b, c, -1).transpose(-1, -2)
+    # tensor [B, C, H, W], pts[:, None] [B, Hout=1, Wout=Npts, 2], interpolated [B, C, Hout=1, Wout=Npts]
+    interpolated = interpolated.reshape(b, c, -1).transpose(-1, -2)     # interpolated [B,  Wout=Npts, C]
 
     if return_gradients:
         dxdy = torch.tensor([[1, 0], [0, 1]])[:, None].to(pts) / scale * 2
@@ -95,7 +95,7 @@ def mask_in_image(pts, image_size: Tuple[int, int], pad: int = 1):
     return torch.all((pts >= pad) & (pts <= image_size_), -1)
 
 
-@torch.jit.script
+# @torch.jit.script
 def interpolate_tensor(tensor, pts, mode: str = 'linear',
                        pad: int = 1, return_gradients: bool = False):
     '''Interpolate a 3D tensor at given 2D locations.
