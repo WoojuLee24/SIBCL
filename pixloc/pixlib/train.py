@@ -337,17 +337,30 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
     optimizer = optimizer_fn(
             lr_params, lr=conf.train.lr, **conf.train.optimizer_options)
 
+    lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, 1)
 
-    def lr_fn(it):  # noqa: E306
-        if conf.train.lr_schedule.type is None:
-            return 1
-        elif conf.train.lr_schedule.type == 'exp':
+    # def lr_fn(it):  # noqa: E306
+    #     if conf.train.lr_schedule.type is None:
+    #         return 1
+    #     elif conf.train.lr_schedule.type == 'exp':
+    #         gam = 10**(-1/conf.train.lr_schedule.exp_div_10)
+    #         return 1 if it < conf.train.lr_schedule.start else gam
+    #     else:
+    #         raise ValueError(conf.train.lr_schedule.type)
+    # lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
+    if conf.train.lr_schedule.type is None:
+        lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, 1)
+    elif conf.train.lr_schedule.type == 'exp':
+        def lr_fn(it):
             gam = 10**(-1/conf.train.lr_schedule.exp_div_10)
             return 1 if it < conf.train.lr_schedule.start else gam
-        else:
-            raise ValueError(conf.train.lr_schedule.type)
-    lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
-    # lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_fn)
+        lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
+    elif conf.train.lr_schedule.type == 'step':
+        total_epoch = conf.train.epochs
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[total_epoch//2, total_epoch*3//4], gamma=0.5)
+    elif conf.train.lr_schedule.type == 'lambda':
+        total_epoch = conf.train.epochs
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: ((1.0 - float(epoch) / total_epoch)**1.0))
 
     if args.restore:
         #optimizer.load_state_dict(init_cp['optimizer']) # delte because para not same after add satellite feature extractor
