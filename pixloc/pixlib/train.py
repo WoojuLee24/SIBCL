@@ -349,7 +349,9 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
     #         raise ValueError(conf.train.lr_schedule.type)
     # lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
     if conf.train.lr_schedule.type is None:
-        lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, 1)
+        def lr_fn(it):
+            return 1
+        lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
     elif conf.train.lr_schedule.type == 'exp':
         def lr_fn(it):
             gam = 10**(-1/conf.train.lr_schedule.exp_div_10)
