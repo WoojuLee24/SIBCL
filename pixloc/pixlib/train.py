@@ -336,13 +336,14 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
                 params, conf.train.lr, conf.train.lr_scaling)
     optimizer = optimizer_fn(
             lr_params, lr=conf.train.lr, **conf.train.optimizer_options)
+
+
     def lr_fn(it):  # noqa: E306
         if conf.train.lr_schedule.type is None:
             return 1
         elif conf.train.lr_schedule.type == 'exp':
             gam = 10**(-1/conf.train.lr_schedule.exp_div_10)
             return 1 if it < conf.train.lr_schedule.start else gam
-        # elif conf.train.lr_schedule.type == 'linear':
         else:
             raise ValueError(conf.train.lr_schedule.type)
     lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
@@ -358,7 +359,7 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
                     OmegaConf.to_yaml(conf))
     losses_ = None
 
-    # # debug
+    # debug
     # test(model, test_loader, wandb_logger=wandb_logger)
     # torch.cuda.empty_cache()  # should be cleared at the first iter
 
@@ -458,9 +459,8 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
                             writer.add_scalar('val/'+k, v, tot_it)
                 torch.cuda.empty_cache()  # should be cleared at the first iter
 
-                # test
-                test(model, test_loader, wandb_logger=wandb_logger)
-                torch.cuda.empty_cache()  # should be cleared at the first iter
+                # test(model, test_loader, wandb_logger=wandb_logger)
+                # torch.cuda.empty_cache()  # should be cleared at the first iter
 
             if stop:
                 break
@@ -490,6 +490,9 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
             del checkpoint
 
         epoch += 1
+
+    # test
+    test(model, test_loader, wandb_logger=wandb_logger)
 
     logger.info(f'Finished training on process {rank}.')
     if rank == 0:
