@@ -277,10 +277,10 @@ class _Dataset(Dataset):
         grd_image['points3D'] = key_points
 
         # ramdom shift translation and ratation on yaw
-        YawShiftRange = 15 * np.pi / 180  # in 15 degree
+        YawShiftRange = 10 * np.pi / 180 # 15 * np.pi / 180  # in 15 degree
         yaw = 2 * YawShiftRange * np.random.random() - YawShiftRange
         R_yaw = torch.tensor([[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
-        TShiftRange = 5  # in 5 meter
+        TShiftRange = 10 # 5  # in 5 meter
         T = 2 * TShiftRange * np.random.rand((3)) - TShiftRange
         T[2] = 0  # no shift on height
 

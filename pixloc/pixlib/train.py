@@ -25,10 +25,9 @@ from pixloc.pixlib.utils.experiments import (delete_old_checkpoints, get_last_ch
 from pixloc.settings import TRAINING_PATH
 from pixloc import logger
 
-import numpy as np
-import datetime
-import time
+from pixloc.pixlib.utils.wandb_logger import WandbLogger
 
+import datetime
 
 default_train_conf = {
     'seed': 20,  # training seed
@@ -37,7 +36,7 @@ default_train_conf = {
     'opt_regexp': None,  # regular expression to filter parameters to optimize
     'optimizer_options': {},  # optional arguments passed to the optimizer
     'lr': 0.001,  # learning rate
-    'lr_schedule': {'type': None, 'start': 0, 'exp_div_10': 0},
+    'lr_schedule': {'type': None, 'start': 0, 'exp_div_10': 0}, #
     'lr_scaling': [(100, ['dampingnet.const'])],
     'eval_every_iter': 1000,  # interval for evaluation on the validation set
     'log_every_iter': 200,  # interval for logging the loss to the console
@@ -51,7 +50,7 @@ default_train_conf = {
 default_train_conf = OmegaConf.create(default_train_conf)
 
 
-def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf, pbar=True):
+def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf, pbar=True, wandb_logger=None):
     model.eval()
     results = {}
     acc = 0
@@ -101,7 +100,56 @@ def do_evaluation(model, loader, device, loss_fn, metrics_fn, conf, pbar=True):
     logger.info(f'mean errR:{torch.mean(errR)},errlat:{torch.mean(errlat)},errlong:{torch.mean(errlong)}')
     logger.info(f'var errR:{torch.var(errR)},errlat:{torch.var(errlat)},errlong:{torch.var(errlong)}')
     logger.info(f'median errR:{torch.median(errR)},errlat:{torch.median(errlat)},errlong:{torch.median(errlong)}')
+
+    if wandb_logger != None:
+        wandb_logger.wandb.log({'val/lat 1m': torch.sum(errlat <= 1) / errlat.size(0)})
+        wandb_logger.wandb.log({'val/lon 1m': torch.sum(errlong <= 1) / errlong.size(0)})
+        wandb_logger.wandb.log({'val/rot 1': torch.sum(errR <= 1) / errR.size(0)})
+
     return results
+
+
+def test(model, test_loader, wandb_logger=None):
+    model.eval()
+    errR = torch.tensor([])
+    errlong = torch.tensor([])
+    errlat = torch.tensor([])
+    for idx, data in enumerate(tqdm(test_loader)):
+        data_ = batch_to_device(data, device='cuda')
+        # logger.set(data_)
+        pred_ = model(data_)
+        metrics = model.metrics(pred_, data_)
+
+        errR = torch.cat([errR, metrics['R_error'].cpu().data], dim=0)
+        errlong = torch.cat([errlong, metrics['long_error'].cpu().data], dim=0)
+        errlat = torch.cat([errlat, metrics['lat_error'].cpu().data], dim=0)
+
+        del pred_, data_
+
+    logger.info(f'acc of lat<=0.25:{torch.sum(errlat <= 0.25) / errlat.size(0)}')
+    logger.info(f'acc of lat<=0.5:{torch.sum(errlat <= 0.5) / errlat.size(0)}')
+    logger.info(f'acc of lat<=1:{torch.sum(errlat <= 1) / errlat.size(0)}')
+    logger.info(f'acc of lat<=2:{torch.sum(errlat <= 2) / errlat.size(0)}')
+
+    logger.info(f'acc of long<=0.25:{torch.sum(errlong <= 0.25) / errlong.size(0)}')
+    logger.info(f'acc of long<=0.5:{torch.sum(errlong <= 0.5) / errlong.size(0)}')
+    logger.info(f'acc of long<=1:{torch.sum(errlong <= 1) / errlong.size(0)}')
+    logger.info(f'acc of long<=2:{torch.sum(errlong <= 2) / errlong.size(0)}')
+
+    logger.info(f'acc of R<=1:{torch.sum(errR <= 1) / errR.size(0)}')
+    logger.info(f'acc of R<=2:{torch.sum(errR <= 2) / errR.size(0)}')
+    logger.info(f'acc of R<=4:{torch.sum(errR <= 4) / errR.size(0)}')
+
+    logger.info(f'mean errR:{torch.mean(errR)}, errlat:{torch.mean(errlat)}, errlong:{torch.mean(errlong)}')
+    logger.info(f'var errR:{torch.var(errR)}, errlat:{torch.var(errlat)}, errlong:{torch.var(errlong)}')
+    logger.info(f'median errR:{torch.median(errR)}, errlat:{torch.median(errlat)}, errlong:{torch.median(errlong)}')
+
+    if wandb_logger != None:
+        wandb_logger.wandb.log({'test/lat 1m': torch.sum(errlat <= 1) / errlat.size(0)})
+        wandb_logger.wandb.log({'test/lon 1m': torch.sum(errlong <= 1) / errlong.size(0)})
+        wandb_logger.wandb.log({'test/rot 1': torch.sum(errR <= 1) / errR.size(0)})
+
+    return
 
 
 def filter_parameters(params, regexp):
@@ -153,7 +201,7 @@ def linear_annealing(init, fin, step, start_step=2000, end_step=6000):
     annealed = min(init + delta * (step - start_step) / (end_step - start_step), fin)
     return annealed
 
-def training(rank, conf, output_dir, args):
+def training(rank, conf, output_dir, args, wandb_logger=None):
     if args.restore:
         logger.info(f'Restoring from previous training of {args.experiment}')
         init_cp = get_last_checkpoint(args.experiment, allow_interrupted=False)
@@ -184,8 +232,20 @@ def training(rank, conf, output_dir, args):
 
     OmegaConf.set_struct(conf, True)  # prevent access to unknown entries
     set_seed(conf.train.seed)
+    # if rank == 0:
+    #     if args.wandb:
+    #         wandb_config = dict(project="vpr", entity='kaist-url-ai28', name=args.experiment)
+    #         wandb_logger = WandbLogger(wandb_config, args)
+    #         wandb_logger.before_run()
+    #     else:
+    #         writer = SummaryWriter(log_dir=str(output_dir))
+    #         wandb_logger = WandbLogger(None)
+
     if rank == 0:
-        writer = SummaryWriter(log_dir=str(output_dir))
+        if wandb_logger==None:
+            writer = SummaryWriter(log_dir=str(output_dir))
+            wandb_logger = WandbLogger(None)
+
 
     data_conf = copy.deepcopy(conf.data)
     if args.distributed:
@@ -229,6 +289,8 @@ def training(rank, conf, output_dir, args):
         train_loader = dataset.get_data_loader(
             'train', distributed=args.distributed)
         val_loader = dataset.get_data_loader('val')
+        test_loader = dataset.get_data_loader('test', shuffle=False)
+
     if rank == 0:
         logger.info(f'Training loader has {len(train_loader)} batches')
         logger.info(f'Validation loader has {len(val_loader)} batches')
@@ -277,12 +339,15 @@ def training(rank, conf, output_dir, args):
     def lr_fn(it):  # noqa: E306
         if conf.train.lr_schedule.type is None:
             return 1
-        if conf.train.lr_schedule.type == 'exp':
+        elif conf.train.lr_schedule.type == 'exp':
             gam = 10**(-1/conf.train.lr_schedule.exp_div_10)
             return 1 if it < conf.train.lr_schedule.start else gam
+        # elif conf.train.lr_schedule.type == 'linear':
         else:
             raise ValueError(conf.train.lr_schedule.type)
     lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, lr_fn)
+    # lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_fn)
+
     if args.restore:
         #optimizer.load_state_dict(init_cp['optimizer']) # delte because para not same after add satellite feature extractor
         if 'lr_scheduler' in init_cp:
@@ -292,6 +357,10 @@ def training(rank, conf, output_dir, args):
         logger.info('Starting training with configuration:\n%s',
                     OmegaConf.to_yaml(conf))
     losses_ = None
+
+    # # debug
+    # test(model, test_loader, wandb_logger=wandb_logger)
+    # torch.cuda.empty_cache()  # should be cleared at the first iter
 
     while epoch < conf.train.epochs and not stop:
         if rank == 0:
@@ -352,24 +421,45 @@ def training(rank, conf, output_dir, args):
                     str_losses = [f'{k} {v:.3E}' for k, v in losses.items()]
                     logger.info('[E {} | it {}] loss {{{}}}'.format(
                         epoch, it, ', '.join(str_losses)))
-                    for k, v in losses.items():
-                        writer.add_scalar('training/'+k, v, tot_it)
-                    writer.add_scalar(
-                        'training/lr', optimizer.param_groups[0]['lr'], tot_it)
+
+                    if args.wandb:
+                        # wandb_logger.log_evaluate(losses)
+                        for k, v in losses.items():
+                            k = 'training/' + k
+                            wandb_logger.wandb.log({k: v})
+                        wandb_logger.wandb.log({'training/lr': optimizer.param_groups[0]['lr']})
+                    else:
+                        for k, v in losses.items():
+                            writer.add_scalar('training/'+k, v, tot_it)
+                        writer.add_scalar(
+                            'training/lr', optimizer.param_groups[0]['lr'], tot_it)
 
             del pred, data, loss, losses
 
             results = 0
             if (stop or it == (len(train_loader) - 1)):
+                # validation
                 with fork_rng(seed=conf.train.seed):
                     results = do_evaluation(
                         model, val_loader, device, loss_fn, metrics_fn,
-                        conf.train, pbar=(rank == 0))
+                        conf.train, pbar=(rank == 0), wandb_logger=wandb_logger)
                 if rank == 0:
                     str_results = [f'{k} {v:.3E}' for k, v in results.items()]
                     logger.info(f'[Validation] {{{", ".join(str_results)}}}')
-                    for k, v in results.items():
-                        writer.add_scalar('val/'+k, v, tot_it)
+
+                    if args.wandb:
+                        # wandb_logger.log_evaluate(results)
+                        for k, v in results.items():
+                            k = 'val/' + k
+                            wandb_logger.wandb.log({k: v})
+                        # wandb_logger.log_evaluate({k: v})
+                    else:
+                        for k, v in results.items():
+                            writer.add_scalar('val/'+k, v, tot_it)
+                torch.cuda.empty_cache()  # should be cleared at the first iter
+
+                # test
+                test(model, test_loader, wandb_logger=wandb_logger)
                 torch.cuda.empty_cache()  # should be cleared at the first iter
 
             if stop:
@@ -407,11 +497,19 @@ def training(rank, conf, output_dir, args):
 
 
 def main_worker(rank, conf, output_dir, args):
+
+    if args.wandb:
+        wandb_config = dict(project="vpr", entity='kaist-url-ai28', name=args.experiment)
+        wandb_logger = WandbLogger(wandb_config, args)
+        wandb_logger.before_run()
+    else:
+        wandb_logger = None
+
     if rank == 0:
         with capture_outputs(output_dir / 'log.txt'):
-            training(rank, conf, output_dir, args)
+            training(rank, conf, output_dir, args, wandb_logger)
     else:
-        training(rank, conf, output_dir, args)
+        training(rank, conf, output_dir, args, wandb_logger)
 
 
 if __name__ == '__main__':
@@ -422,9 +520,10 @@ if __name__ == '__main__':
     parser.add_argument('--restore', action='store_true', default=False)
     parser.add_argument('--distributed', action='store_true',default=False)
     parser.add_argument('--dotlist', nargs='*', default=["data.name=kitti","data.max_num_points3D=4096","data.force_num_points3D=True",
-                                                         "data.num_workers=0","data.train_batch_size=1","data.test_batch_size=1",
+                                                         "data.num_workers=4","data.train_batch_size=1","data.test_batch_size=1",
                                                          "train.lr=1e-5","model.name=two_view_refiner"])
-    # parser.add_argument('--wandb', action='store_true', default=False)
+    parser.add_argument('--wandb', action='store_true', default=False)
+
     args = parser.parse_intermixed_args()
 
     logger.info(f'Starting experiment {args.experiment}')
@@ -460,5 +559,5 @@ if __name__ == '__main__':
             main_worker, nprocs=args.n_gpus,
             args=(conf, output_dir, args))
     else:
-        os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+        # os.environ["CUDA_VISIBL366E_DEVICES"] = '0'
         main_worker(0, conf, output_dir, args)

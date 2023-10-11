@@ -3,7 +3,7 @@ data:
   max_num_points3D: 10000 
   force_num_points3D: true
   batch_size: 1 
-  num_workers: 0 
+  num_workers: 4
   seed: 1
 model:
   name: two_view_refiner
@@ -40,6 +40,10 @@ train:
   dataset_callback_fn: sample_new_items
   lr: 1.0e-05
   lr_scaling: [[100, ['dampingnet.const']]]
+  lr_schedule: # added
+    type: None
+    start: 0
+    exp_div_10: 0
   median_metrics:
   - loss/reprojection_error
   - loss/reprojection_error/init

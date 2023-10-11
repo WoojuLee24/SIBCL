@@ -50,10 +50,10 @@ class DirectAbsoluteCost:
             confidences: Optional[Tuple[Tensor, Tensor, int]] = None,
             do_gradients: bool = False):
 
-        p3D_r = T_q2r * p3D # q_3d to ref_3d
-        p2D, visible = camera.world2image(p3D_r) # ref_3d to ref_2d
+        p3D_r = T_q2r * p3D # q_3d to q2r_3d
+        p2D, visible = camera.world2image(p3D_r) # q2r_3d to q2r_2d
         F_p2D_raw, valid, gradients = self.interpolator(
-            F_ref, p2D, return_gradients=do_gradients) # get ref 2d features
+            F_ref, p2D, return_gradients=do_gradients) # get g2r 2d features
         valid = valid & visible
 
         C_ref, C_query, C_count = confidences

@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from omegaconf import OmegaConf
 import os
+from tqdm import tqdm
+
 SavePlt = False
 visual_path = '../visual_kitti'
 
@@ -22,7 +24,7 @@ data_conf = {
     'max_num_points3D': 5000, #both:3976,3D:5000
     'force_num_points3D': False,
     'train_batch_size': 1,
-    'test_batch_size': 1,
+    'test_batch_size': 4,
     'num_workers': 0,
 }
 
@@ -44,9 +46,10 @@ test_loader = dataset.get_data_loader('test', shuffle=False) #shuffle=True)
 device = 'cuda'
 conf = {
     'normalize_dt': False,
-    'optimizer': {'num_iters': 20,},
+    'optimizer': {'num_iters': 5,},
 }
-refiner = load_experiment(exp, conf,get_last=True).to(device)
+# refiner = load_experiment(exp, conf, get_last=True).to(device)
+refiner = load_experiment(exp, conf, ckpt='/ws/external/outputs/training/LM_LiDAR1009_e4_niters5/checkpoint_best.tar').to(device)
 print(OmegaConf.to_yaml(refiner.conf))
 
 class Logger:
@@ -233,7 +236,7 @@ def test(refiner, test_loader):
     errR = torch.tensor([])
     errlong = torch.tensor([])
     errlat = torch.tensor([])
-    for idx, data in enumerate(test_loader):
+    for idx, data in enumerate(tqdm(test_loader)):
         data_ = batch_to_device(data, device)
         logger.set(data_)
         pred_ = refiner(data_)

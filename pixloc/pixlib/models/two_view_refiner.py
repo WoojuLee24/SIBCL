@@ -110,9 +110,6 @@ class TwoViewRefiner(BaseModel):
 
             p2D_query, visible = cam_q.world2image(data['query']['T_w2cam']*p3D_query)
             F_q, mask, _ = opt.interpolator(F_q, p2D_query)
-            # debug
-            # from pixloc.pixlib.geometry import interpolation
-            # F_q, mask, _ = interpolation.interpolate_tensor(F_q, p2D_query, mode='linear', pad=4, return_gradients=False)
             mask &= visible
 
 
@@ -134,7 +131,7 @@ class TwoViewRefiner(BaseModel):
             pred['T_q2r_opt'].append(T_opt)
             T_init = T_opt.detach()
 
-            # query & reprojection GT error, for query unet back propogate
+            # query & reprojection GT error, for query unet back propogate  # PAB Loss
             if pose_loss:
                 loss_gt = self.preject_l1loss(opt, p3D_query, F_ref, F_q, data['T_q2r_gt'], cam_ref, mask=mask, W_ref_query=W_ref_q)
                 loss_init = self.preject_l1loss(opt, p3D_query, F_ref, F_q, data['T_q2r_init'], cam_ref, mask=mask, W_ref_query=W_ref_q)
