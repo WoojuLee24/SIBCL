@@ -32,6 +32,7 @@ model:
     learned_damping: true
     damping:
       type: constant
+    input: res
 train:
   seed: 0
   epochs: 200

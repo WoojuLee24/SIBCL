@@ -44,6 +44,7 @@ class DirectAbsoluteCost:
     #     res = F_p2D - F_ref
     #     info = (p3D_q, F_p2D_raw, gradients)
     #     return res, valid, weight, F_p2D, info
+
     def residuals(
             self, T_q2r: Pose, camera: Camera, p3D: Tensor,
             F_ref: Tensor, F_query: Tensor,
@@ -117,15 +118,7 @@ class DirectAbsoluteCost:
         J = J_f_p2D @ J_p2D_T
         return J, J_p2D_T
 
-    # def residual_jacobian(
-    #         self, T_w2q: Pose, camera: Camera, p3D: Tensor,
-    #         F_ref: Tensor, F_query: Tensor,
-    #         confidences: Optional[Tuple[Tensor, Tensor]] = None):
-    #
-    #     res, valid, weight, F_p2D, info = self.residuals(
-    #         T_w2q, camera, p3D, F_ref, F_query, confidences, True)
-    #     J, _ = self.jacobian(T_w2q, camera, *info)
-    #     return res, valid, weight, F_p2D, J
+
     def residual_jacobian(
             self, T_q2r: Pose, camera: Camera, p3D: Tensor,
             F_ref: Tensor, F_query: Tensor,

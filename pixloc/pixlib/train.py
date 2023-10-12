@@ -12,6 +12,7 @@ import copy
 from collections import defaultdict
 
 from omegaconf import OmegaConf
+from omegaconf import open_dict
 from tqdm import tqdm
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -304,6 +305,10 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
         stop = True
     stop = False
     signal.signal(signal.SIGINT, sigint_handler)
+
+    OmegaConf.set_struct(conf, True)
+    with open_dict(conf):
+        conf.model.optimizer.max_num_points3D = conf.data.max_num_points3D
 
     model = get_model(conf.model.name)(conf.model).to(device)
     loss_fn, metrics_fn = model.loss, model.metrics
