@@ -37,6 +37,7 @@ class NNOptimizer(BaseOptimizer):
         input='res',
         pool='none',
         norm='none',
+        pose_from='aa',
         # deprecated entries
         lambda_=0.,
         learned_damping=True,
@@ -86,15 +87,30 @@ class NNOptimizer(BaseOptimizer):
             # # solve the nn optimizer
             delta = self.nnrefine(F_query, F_ref2D)
 
-            # compute the pose update
-            dt, dw = delta.split([3, 3], dim=-1)
-            # dt, dw = delta.split([2, 1], dim=-1)
-            # fix z trans, roll and pitch
-            zeros = torch.zeros_like(dw[:,-1:])
-            dw = torch.cat([zeros,zeros,dw[:,-1:]], dim=-1)
-            dt = torch.cat([dt[:,0:2],zeros], dim=-1)
+            if self.conf.pose_from == 'aa':
+                # compute the pose update
+                dt, dw = delta.split([3, 3], dim=-1)
+                # dt, dw = delta.split([2, 1], dim=-1)
+                # fix z trans, roll and pitch
+                zeros = torch.zeros_like(dw[:,-1:])
+                dw = torch.cat([zeros,zeros,dw[:,-1:]], dim=-1)
+                dt = torch.cat([dt[:,0:2],zeros], dim=-1)
+                T_delta = Pose.from_aa(dw, dt)
+            elif self.conf.pose_from == 'rt':
+                dt, dw = delta.split([2, 1], dim=-1)
+                B = dw.size(0)
+                cos = torch.cos(dw)
+                sin = torch.sin(dw)
+                zeros = torch.zeros_like(cos)
+                ones = torch.ones_like(cos)
+                dR = torch.cat([cos, -sin, zeros, sin, cos, zeros, zeros, zeros, ones], dim=-1)  # shape = [B,9]
+                dR = dR.view(B, 3, 3)  # shape = [B,3,3]
 
-            T_delta = Pose.from_aa(dw, dt)
+                dt = torch.cat([dt, zeros], dim=-1)
+
+                T_delta = Pose.from_Rt(dR, dt)
+
+
             T = T_delta @ T
 
             # self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
@@ -178,6 +194,11 @@ class NNrefinev0_1(nn.Module):
             self.cin = [128, 128, 32]
             self.cout = 32
 
+        if self.args.pose_from == 'aa':
+            self.yout = 6
+        elif self.args.pose_from == 'rt':
+            self.yout = 3
+
         self.linear0 = nn.Sequential(nn.ReLU(inplace=True),
                                      nn.Linear(self.cin[0], self.cout))
         self.linear1 = nn.Sequential(nn.ReLU(inplace=True),
@@ -192,7 +213,7 @@ class NNrefinev0_1(nn.Module):
                                          nn.ReLU(inplace=True),
                                          nn.Linear(4096, 128),
                                          nn.ReLU(inplace=True),
-                                         nn.Linear(128, 6),
+                                         nn.Linear(128, self.yout),
                                          nn.Tanh())
         # elif self.args.pool == 'aap2':
         #     self.pool = nn.AdaptiveAvgPool1d(4096 // 64)
@@ -217,7 +238,7 @@ class NNrefinev0_1(nn.Module):
             pass
 
         if self.args.input == 'concat':
-            r = torch.cat([pred_feat, ref_feat], dim=1)
+            r = torch.cat([pred_feat, ref_feat], dim=-1)
         else:
             r = pred_feat - ref_feat  # [B, C, H, W]
 
