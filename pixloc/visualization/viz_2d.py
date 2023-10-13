@@ -10,6 +10,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 import numpy as np
+import torch
 
 
 def cm_RdGn(x):
@@ -111,6 +112,13 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, indices=(0, 1), a=1.):
         ax0.scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
         ax1.scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
 
+
+def plot_valid_points(imr, imq, p2Dr, p2Dq):
+    valid_imr = torch.zeros_like(imr)
+    p2Dr_int, p2Dq_int = p2Dr.long(), p2Dq.long()
+    valid_imr[p2Dr_int[:, 1], p2Dr_int[:, 0], :] = imq[p2Dq_int[:, 1], p2Dq_int[:, 0], :]
+    p2Dr_num, p2Dq_num = p2Dr_int.size(0), p2Dq_int.size(0)
+    plot_images([valid_imr], cmaps=matplotlib.cm.gnuplot2, titles=[str(p2Dr_num)])
 
 def add_text(idx, text, pos=(0.01, 0.99), fs=15, color='w',
              lcolor='k', lwidth=2):
