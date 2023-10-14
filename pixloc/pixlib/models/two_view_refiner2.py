@@ -45,6 +45,7 @@ class TwoViewRefiner2(BaseModel):
         'optimizer': {
             'name': 'nn_optimizer', # 'learned_optimizer', #'basic_optimizer',
             'input': 'res',
+            'pose_loss': True,
         },
         'duplicate_optimizer_per_scale': True,
         'success_thresh': 3,
@@ -133,7 +134,7 @@ class TwoViewRefiner2(BaseModel):
             T_init = T_opt.detach()
 
             # query & reprojection GT error, for query unet back propogate  # PAB Loss
-            if pose_loss:
+            if self.conf.optimizer.pose_loss: #pose_loss:
                 loss_gt = self.preject_l1loss(opt, p3D_query, F_ref, F_q, data['T_q2r_gt'], cam_ref, mask=mask, W_ref_query=W_ref_q)
                 loss_init = self.preject_l1loss(opt, p3D_query, F_ref, F_q, data['T_q2r_init'], cam_ref, mask=mask, W_ref_query=W_ref_q)
                 diff_loss = torch.log(1 + torch.exp(10*(1- (loss_init + 1e-8) / (loss_gt + 1e-8))))
@@ -182,7 +183,7 @@ class TwoViewRefiner2(BaseModel):
         num_scales = len(self.extractor.scales)
         success = None
         losses = {'total': 0.}
-        if pose_loss:
+        if self.conf.optimizer.pose_loss:
             losses['pose_loss'] = 0
         for i, T_opt in enumerate(pred['T_q2r_opt']):
             err = reprojection_error(T_opt).clamp(max=self.conf.clamp_error)
@@ -195,7 +196,7 @@ class TwoViewRefiner2(BaseModel):
             losses['total'] += loss
 
             # query & reprojection GT error, for query unet back propogate
-            if pose_loss:
+            if self.conf.optimizer.pose_loss:
                 losses['pose_loss'] += pred['pose_loss'][i]/ num_scales
                 poss_loss_weight = get_weight_from_reproloss(err_init)
                 losses['total'] += (poss_loss_weight * pred['pose_loss'][i]/ num_scales).clamp(max=self.conf.clamp_error/num_scales)

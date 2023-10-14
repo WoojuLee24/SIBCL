@@ -33,6 +33,7 @@ model:
     damping:
       type: constant
     input: res
+    pose_loss: True
 train:
   seed: 0
   epochs: 200

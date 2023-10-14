@@ -38,6 +38,7 @@ class NNOptimizer(BaseOptimizer):
         pool='none',
         norm='none',
         pose_from='aa',
+        pose_loss=False,
         # deprecated entries
         lambda_=0.,
         learned_damping=True,
