@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 import torch
 from torch import nn, Tensor
 
@@ -39,6 +39,7 @@ class NNOptimizer(BaseOptimizer):
         norm='none',
         pose_from='aa',
         pose_loss=False,
+        range=False,
         # deprecated entries
         lambda_=0.,
         learned_damping=True,
@@ -55,6 +56,7 @@ class NNOptimizer(BaseOptimizer):
              W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None):
 
         T = T_init
+
         J_scaling = None
         if self.conf.normalize_features:
             F_query = torch.nn.functional.normalize(F_query, dim=-1)
@@ -100,6 +102,7 @@ class NNOptimizer(BaseOptimizer):
             elif self.conf.pose_from == 'rt':
                 dt, dw = delta.split([2, 1], dim=-1)
                 B = dw.size(0)
+
                 cos = torch.cos(dw)
                 sin = torch.sin(dw)
                 zeros = torch.zeros_like(cos)
@@ -111,8 +114,21 @@ class NNOptimizer(BaseOptimizer):
 
                 T_delta = Pose.from_Rt(dR, dt)
 
-
-            T = T_delta @ T
+            # T = T_delta @ T
+            if self.conf.range == True:
+                shift = (T_delta @ T) @ T_init.inv()
+                B = dt.size(0)
+                t = shift.t[:, :2]
+                rand_t = torch.distributions.uniform.Uniform(-1, 1).sample([B, 2]).to(dt.device)
+                rand_t.requires_grad = True
+                t = torch.where((t > -10) & (t < 10), t, rand_t)
+                zero = torch.zeros([B, 1]).to(t.device)
+                # zero = shift.t[:, 2:3]
+                t = torch.cat([t, zero], dim=1)
+                shift._data[..., -3:] = t
+                T = shift @ T_init
+            else:
+                T = T_delta @ T
 
             # self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
             #          valid=valid, w_unc=w_unc, w_loss=w_loss, H=H, J=J)

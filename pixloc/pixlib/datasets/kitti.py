@@ -295,6 +295,8 @@ class _Dataset(Dataset):
             'query': grd_image,
             'T_q2r_init': q2r_init.float(),
             'T_q2r_gt': q2r_gt.float(),
+            'yaw_gt': yaw,
+            't_gt': T
         }
 
         # debug

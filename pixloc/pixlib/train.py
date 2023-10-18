@@ -515,7 +515,7 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
     test(model, test_loader, wandb_logger=wandb_logger)
 
     logger.info(f'Finished training on process {rank}.')
-    if rank == 0:
+    if rank == 0 and wandb_logger == None:
         writer.close()
 
 
