@@ -224,27 +224,27 @@ class NNrefinev0_1(nn.Module):
         self.linear2 = nn.Sequential(nn.ReLU(inplace=True),
                                      nn.Linear(self.cin[2], self.cout))
 
-        self.linearp = nn.Sequential(nn.ReLU(inplace=True),
+        self.linearp = nn.Sequential(nn.ReLU(inplace=False),
                                      nn.Linear(3, self.cout),
-                                     nn.ReLU(inplace=True),
+                                     nn.ReLU(inplace=False),
                                      nn.Linear(self.cout, self.cout))
 
 
         # if self.args.pool == 'none':
         if self.args.pool == 'embed':
-            self.pooling = nn.Sequential(nn.ReLU(inplace=True),
+            self.pooling = nn.Sequential(nn.ReLU(inplace=False),
                                          nn.Linear(self.args.max_num_points3D, 256),
-                                         nn.ReLU(inplace=True),
+                                         nn.ReLU(inplace=False),
                                          nn.Linear(256, 64),
-                                         nn.ReLU(inplace=True),
+                                         nn.ReLU(inplace=False),
                                          nn.Linear(64, 1)
                                          )
 
-        self.mapping = nn.Sequential(nn.ReLU(inplace=True),
+        self.mapping = nn.Sequential(nn.ReLU(inplace=False),
                                      nn.Linear(self.cout * 2, 256),
-                                     nn.ReLU(inplace=True),
+                                     nn.ReLU(inplace=False),
                                      nn.Linear(256, 32),
-                                     nn.ReLU(inplace=True),
+                                     nn.ReLU(inplace=False),
                                      nn.Linear(32, self.yout),
                                      nn.Tanh())
 
@@ -283,6 +283,7 @@ class NNrefinev0_1(nn.Module):
         elif C == self.cin[2]:
             x = self.linear2(r)
 
+        point = point.contiguous()
         pointfeat = self.linearp(point)
         x = torch.cat([x, pointfeat], dim=2)
         if self.args.pool == 'max':
