@@ -21,7 +21,7 @@ from pixloc.visualization.viz_2d import (
     features_to_RGB, add_text, save_plot, plot_valid_points)
 
 data_conf = {
-    'max_num_points3D': 5000, #both:3976,3D:5000
+    'max_num_points3D': 77777,  # 5000, #both:3976,3D:5000
     'force_num_points3D': False,
     'train_batch_size': 1,
     'test_batch_size': 4,
