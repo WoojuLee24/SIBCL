@@ -288,7 +288,7 @@ class NNrefinev0_1(nn.Module):
         if self.args.pool == 'max':
             x = torch.max(x, 1, keepdim=True)[0]
         elif self.args.pool == 'embed':
-            x = x.permute(0, 2, 1).contiguous()
+            x = x.contiguous().permute(0, 2, 1).contiguous()
             x = self.pooling(x)
         elif self.args.pool == 'avg':
             x = torch.mean(x, 1, keepdim=True)[0]
