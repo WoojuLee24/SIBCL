@@ -40,6 +40,7 @@ class NNOptimizer3D(BaseOptimizer):
         pose_from='aa',
         pose_loss=False,
         range=False,
+        linearp=False,
         # deprecated entries
         lambda_=0.,
         learned_damping=True,
@@ -54,7 +55,8 @@ class NNOptimizer3D(BaseOptimizer):
 
     def _run(self, p3D: Tensor, F_ref: Tensor, F_query: Tensor,
              T_init: Pose, camera: Camera, mask: Optional[Tensor] = None,
-             W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None):
+             W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None,
+             scale=None):
 
         T = T_init
 
@@ -68,6 +70,7 @@ class NNOptimizer3D(BaseOptimizer):
 
         for i in range(self.conf.num_iters):
             res, valid, w_unc, F_ref2D, J = self.cost_fn.residual_jacobian(T, *args)
+            p3D_ref = T * p3D
 
             if mask is not None:
                 valid &= mask
@@ -89,7 +92,7 @@ class NNOptimizer3D(BaseOptimizer):
             #     delta = delta * J_scaling
 
             # # solve the nn optimizer
-            delta = self.nnrefine(F_query, F_ref2D, p3D)
+            delta = self.nnrefine(F_query, F_ref2D, p3D, p3D_ref, scale)
 
             if self.conf.pose_from == 'aa':
                 # compute the pose update
@@ -143,74 +146,32 @@ class NNOptimizer3D(BaseOptimizer):
 
         return T, failed
 
-    # def _run(self, p3D: Tensor, F_ref: Tensor, F_query: Tensor,
-    #          T_init: Pose, camera: Camera, mask: Optional[Tensor] = None,
-    #          W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None):
-    #
-    #     T = T_init
-    #     J_scaling = None
-    #     if self.conf.normalize_features:
-    #         F_query = torch.nn.functional.normalize(F_query, dim=-1)
-    #     args = (camera, p3D, F_ref, F_query, W_ref_query)
-    #     failed = torch.full(T.shape, False, dtype=torch.bool, device=T.device)
-    #
-    #     lambda_ = self.dampingnet()
-    #
-    #     for i in range(self.conf.num_iters):
-    #         res, valid, w_unc, _, J = self.cost_fn.residual_jacobian(T, *args)
-    #
-    #         if mask is not None:
-    #             valid &= mask
-    #         failed = failed | (valid.long().sum(-1) < 10)  # too few points
-    #
-    #         # compute the cost and aggregate the weights
-    #         cost = (res**2).sum(-1)
-    #         cost, w_loss, _ = self.loss_fn(cost)
-    #         weights = w_loss * valid.float()
-    #         if w_unc is not None:
-    #             weights = weights*w_unc
-    #         if self.conf.jacobi_scaling:
-    #             J, J_scaling = self.J_scaling(J, J_scaling, valid)
-    #
-    #         # solve the linear system
-    #         g, H = self.build_system(J, res, weights)
-    #         delta = optimizer_step(g, H, lambda_, mask=~failed)
-    #         if self.conf.jacobi_scaling:
-    #             delta = delta * J_scaling
-    #
-    #         # compute the pose update
-    #         dt, dw = delta.split([3, 3], dim=-1)
-    #         # dt, dw = delta.split([2, 1], dim=-1)
-    #         # fix z trans, roll and pitch
-    #         zeros = torch.zeros_like(dw[:,-1:])
-    #         dw = torch.cat([zeros,zeros,dw[:,-1:]], dim=-1)
-    #         dt = torch.cat([dt[:,0:2],zeros], dim=-1)
-    #
-    #         T_delta = Pose.from_aa(dw, dt)
-    #         T = T_delta @ T
-    #
-    #         self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
-    #                  valid=valid, w_unc=w_unc, w_loss=w_loss, H=H, J=J)
-    #         if self.early_stop(i=i, T_delta=T_delta, grad=g, cost=cost):
-    #             break
-    #
-    #     if failed.any():
-    #         logger.debug('One batch element had too few valid points.')
-    #
-    #     return T, failed
 
 class NNrefinev0_1(nn.Module):
     def __init__(self, args):
         super(NNrefinev0_1, self).__init__()
         self.args = args
 
+        self.cin = [128, 128, 32]
+        self.cout = 128
+        pointc = 128
+
+        if self.args.linearp:
+            self.cin = [c+pointc for c in self.cin]
+            self.linearp = nn.Sequential(nn.Linear(3, 16),
+                                         # nn.BatchNorm1d(16),
+                                         nn.ReLU(inplace=False),
+                                         nn.Linear(16, pointc),
+                                         # nn.BatchNorm1d(pointc),
+                                         nn.ReLU(inplace=False),
+                                         nn.Linear(pointc, pointc))
+        else:
+            self.cin = [c+3 for c in self.cin]
+
+
         # channel projection
         if self.args.input in ['concat']:
-            self.cin = [256, 256, 64]
-            self.cout = 256
-        else:
-            self.cin = [128, 128, 32]
-            self.cout = 128
+            self.cin = [c*2 for c in self.cin]
 
         if self.args.pose_from == 'aa':
             self.yout = 6
@@ -224,12 +185,6 @@ class NNrefinev0_1(nn.Module):
         self.linear2 = nn.Sequential(nn.ReLU(inplace=True),
                                      nn.Linear(self.cin[2], self.cout))
 
-        self.linearp = nn.Sequential(nn.ReLU(inplace=False),
-                                     nn.Linear(3, self.cout),
-                                     nn.ReLU(inplace=False),
-                                     nn.Linear(self.cout, self.cout))
-
-
         # if self.args.pool == 'none':
         if self.args.pool == 'embed':
             self.pooling = nn.Sequential(nn.ReLU(inplace=False),
@@ -241,9 +196,9 @@ class NNrefinev0_1(nn.Module):
                                          )
 
         self.mapping = nn.Sequential(nn.ReLU(inplace=False),
-                                     nn.Linear(self.cout * 2, 256),
+                                     nn.Linear(self.cout, 128),
                                      nn.ReLU(inplace=False),
-                                     nn.Linear(256, 32),
+                                     nn.Linear(128, 32),
                                      nn.ReLU(inplace=False),
                                      nn.Linear(32, self.yout),
                                      nn.Tanh())
@@ -259,33 +214,43 @@ class NNrefinev0_1(nn.Module):
         #                                  nn.Tanh())
 
 
-    def forward(self, pred_feat, ref_feat, point, iter=0, level=0):
+    def forward(self, query_feat, ref_feat, p3D_query, p3D_ref, scale):
 
-        B, N, C = pred_feat.size()
+        B, N, C = query_feat.size()
 
         # normalization
         if self.args.norm == 'zsn':
-            pred_feat = (pred_feat - pred_feat.mean()) / (pred_feat.std() + 1e-6)
+            query_feat = (query_feat - query_feat.mean()) / (query_feat.std() + 1e-6)
             ref_feat = (ref_feat - ref_feat.mean()) / (ref_feat.std() + 1e-6)
         else:
             pass
 
-        if self.args.input == 'concat':
-            r = torch.cat([pred_feat, ref_feat], dim=-1)
+        if self.args.linearp:
+            p3D_query = p3D_query.contiguous()
+            p3D_query_feat = self.linearp(p3D_query)
+            p3D_ref = p3D_ref.contiguous()
+            p3D_ref_feat = self.linearp(p3D_ref)
         else:
-            r = pred_feat - ref_feat  # [B, C, H, W]
+            p3D_query_feat = p3D_query.contiguous()
+            p3D_ref_feat = p3D_ref.contiguous()
+
+        query_feat = torch.cat([query_feat, p3D_query_feat], dim=2)
+        ref_feat = torch.cat([ref_feat, p3D_ref_feat], dim=2)
+
+
+        if self.args.input == 'concat':     # default
+            r = torch.cat([query_feat, ref_feat], dim=-1)
+        else:
+            r = query_feat - ref_feat  # [B, C, H, W]
 
         B, N, C = r.shape
-        if C == self.cin[0]:
+        if 2-scale == 0:
             x = self.linear0(r)
-        elif C == self.cin[1]:
+        elif 2-scale == 1:
             x = self.linear1(r)
-        elif C == self.cin[2]:
+        elif 2-scale == 2:
             x = self.linear2(r)
 
-        point = point.contiguous()
-        pointfeat = self.linearp(point)
-        x = torch.cat([x, pointfeat], dim=2)
         if self.args.pool == 'max':
             x = torch.max(x, 1, keepdim=True)[0]
         elif self.args.pool == 'embed':

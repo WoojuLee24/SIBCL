@@ -95,7 +95,7 @@ class BaseOptimizer(BaseModel):
     def _forward(self, data: Dict):
         return self._run(
             data['p3D'], data['F_ref'], data['F_q'], data['T_init'],
-            data['camera'], data['mask'], data.get('W_ref_q'))
+            data['camera'], data['mask'], data.get('W_ref_q'), data['scale'])
 
     @torchify
     def run(self, *args, **kwargs):
