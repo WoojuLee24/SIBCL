@@ -89,7 +89,7 @@ class NNOptimizer(BaseOptimizer):
             #     delta = delta * J_scaling
 
             # # solve the nn optimizer
-            delta = self.nnrefine(F_query, F_ref2D, p3D)
+            delta = self.nnrefine(F_query, F_ref2D)
 
             if self.conf.pose_from == 'aa':
                 # compute the pose update
@@ -207,10 +207,10 @@ class NNrefinev0_1(nn.Module):
         # channel projection
         if self.args.input in ['concat']:
             self.cin = [256, 256, 64]
-            self.cout = 256
+            self.cout = 64
         else:
             self.cin = [128, 128, 32]
-            self.cout = 128
+            self.cout = 32
 
         if self.args.pose_from == 'aa':
             self.yout = 6
@@ -224,19 +224,14 @@ class NNrefinev0_1(nn.Module):
         self.linear2 = nn.Sequential(nn.ReLU(inplace=True),
                                      nn.Linear(self.cin[2], self.cout))
 
-        self.linearp = nn.Sequential(nn.ReLU(inplace=True),
-                                     nn.Linear(3, self.cout),
-                                     nn.ReLU(inplace=True),
-                                     nn.Linear(self.cout, self.cout))
-
 
         if self.args.pool == 'none':
             self.mapping = nn.Sequential(nn.ReLU(inplace=True),
-                                         nn.Linear(self.cout * 2, 256),
+                                         nn.Linear(self.cout * args.max_num_points3D, 4096),
                                          nn.ReLU(inplace=True),
-                                         nn.Linear(256, 32),
+                                         nn.Linear(4096, 128),
                                          nn.ReLU(inplace=True),
-                                         nn.Linear(32, self.yout),
+                                         nn.Linear(128, self.yout),
                                          nn.Tanh())
         # elif self.args.pool == 'aap2':
         #     self.pool = nn.AdaptiveAvgPool1d(4096 // 64)
@@ -249,7 +244,7 @@ class NNrefinev0_1(nn.Module):
         #                                  nn.Tanh())
 
 
-    def forward(self, pred_feat, ref_feat, point, iter=0, level=0):
+    def forward(self, pred_feat, ref_feat, iter=0, level=0):
 
         B, N, C = pred_feat.size()
 
@@ -272,10 +267,6 @@ class NNrefinev0_1(nn.Module):
             x = self.linear1(r)
         elif C == self.cin[2]:
             x = self.linear2(r)
-
-        pointfeat = self.linearp(point)
-        x = torch.cat([x, pointfeat], dim=2)
-        x = torch.max(x, 1, keepdim=True)[0]
 
         if self.args.pool == 'none':
             x = x.view(B, -1)
