@@ -49,7 +49,7 @@ conf = {
     'optimizer': {'num_iters': 5,},
 }
 # refiner = load_experiment(exp, conf, get_last=True).to(device)
-refiner = load_experiment(exp, conf, ckpt='/ws/external/outputs/training/LM_LiDAR1009_e4_niters5/checkpoint_best.tar').to(device)
+refiner = load_experiment(exp, conf, ckpt='/ws/external/outputs/training/LM_LiDAR1011_e10_i1_b2/checkpoint_best.tar').to(device)
 print(OmegaConf.to_yaml(refiner.conf))
 
 class Logger:
@@ -127,8 +127,8 @@ def Val(refiner, val_loader, save_path, best_result):
 
         p2D_q, valid_q = data['query']['camera'].world2image(data['query']['T_w2cam']*p3D_q)
         p2D_r_gt, valid_r = cam_r.world2image(data['T_q2r_gt'] * p3D_q)
-        p2D_q_init, _ = cam_r.world2image(data['T_q2r_init'] * p3D_q)
-        p2D_q_opt, _ = cam_r.world2image(pred['T_q2r_opt'][-1] * p3D_q)
+        p2D_r_init, _ = cam_r.world2image(data['T_q2r_init'] * p3D_q)
+        p2D_r_opt, _ = cam_r.world2image(pred['T_q2r_opt'][-1] * p3D_q)
         valid = valid_q & valid_r
 
         losses = refiner.loss(pred_, data_)
@@ -150,8 +150,8 @@ def Val(refiner, val_loader, save_path, best_result):
             plot_images([imr],dpi=50,  # set to 100-200 for higher res
                              titles=[(valid_r.sum().item(), valid_q.sum().item()), errP + errt])
             plot_keypoints([p2D_r_gt[valid]], colors='lime')
-            plot_keypoints([p2D_q_init[valid]], colors='red')
-            plot_keypoints([p2D_q_opt[valid]], colors='blue')
+            plot_keypoints([p2D_r_init[valid]], colors='red')
+            plot_keypoints([p2D_r_opt[valid]], colors='blue')
             if SavePlt:
                 save_plot(save_path + f'/sat_points.png')
             plt.show()
@@ -170,17 +170,37 @@ def Val(refiner, val_loader, save_path, best_result):
             if SavePlt:
                 save_plot(save_path + f'/validgt_sat_points.png')
 
-            plot_valid_points(imr, imr, p2D_q_opt[valid], p2D_q_opt[valid])
+            plot_valid_points(imr, imr, p2D_r_opt[valid], p2D_r_opt[valid])
             if SavePlt:
                 save_plot(save_path + f'/validopt_sat_points.png')
 
-            plot_valid_points(imr, imr, p2D_q_init[valid], p2D_q_init[valid])
+            plot_valid_points(imr, imr, p2D_r_init[valid], p2D_r_init[valid])
             if SavePlt:
                 save_plot(save_path + f'/validinit_sat_points.png')
 
             plot_valid_points(imr, imq, p2D_r_gt[valid], p2D_q[valid])
             if SavePlt:
                 save_plot(save_path + f'/validgt_g2s_points.png')
+
+            plot_valid_points(imr, imq, p2D_r_init[valid], p2D_q[valid])
+            if SavePlt:
+                save_plot(save_path + f'/validinit_g2s_points.png')
+
+            plot_valid_points(imr, imq, p2D_r_opt[valid], p2D_q[valid])
+            if SavePlt:
+                save_plot(save_path + f'/validopt_g2s_points.png')
+
+            plot_valid_points(imr, torch.ones_like(imr), p2D_r_gt[valid], p2D_r_gt[valid])
+            if SavePlt:
+                save_plot(save_path + f'/lidargt_sat_points.png')
+
+            plot_valid_points(imr, torch.ones_like(imr), p2D_r_gt[valid], p2D_q[valid])
+            if SavePlt:
+                save_plot(save_path + f'/lidargt_g2s_points.png')
+
+            plot_valid_points(imr, torch.ones_like(imr), p2D_r_init[valid], p2D_r_init[valid])
+            if SavePlt:
+                save_plot(save_path + f'/lidarinit_sat_points.png')
 
             # feature & confidence
             for i, (F0, F1) in enumerate(zip(pred['ref']['feature_maps'], pred['query']['feature_maps'])):

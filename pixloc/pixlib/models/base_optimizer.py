@@ -13,6 +13,7 @@ from .utils import masked_mean
 from ..geometry import Camera, Pose
 from ..geometry.optimization import optimizer_step
 from ..geometry.interpolation import Interpolator
+from ..geometry.bevextraction import BevExtractor
 from ..geometry.costs import DirectAbsoluteCost
 from ..geometry import losses  # noqa
 from ...utils.tools import torchify
@@ -48,6 +49,8 @@ class BaseOptimizer(BaseModel):
         self.interpolator = Interpolator(**conf.interpolation)
         self.cost_fn = DirectAbsoluteCost(self.interpolator,
                                           normalize=conf.normalize_features)
+        self.bev_extractor = BevExtractor()
+
         assert conf.lambda_ >= 0.
         # deprecated entries
         assert not conf.sqrt_diag_damping
@@ -95,7 +98,7 @@ class BaseOptimizer(BaseModel):
     def _forward(self, data: Dict):
         return self._run(
             data['p3D'], data['F_ref'], data['F_q'], data['T_init'],
-            data['camera'], data['mask'], data.get('W_ref_q'), data['scale'])
+            data['camera'], data['mask'], data.get('W_ref_q'))
 
     @torchify
     def run(self, *args, **kwargs):

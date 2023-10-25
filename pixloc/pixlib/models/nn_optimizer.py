@@ -39,6 +39,7 @@ class NNOptimizer(BaseOptimizer):
         norm='none',
         pose_from='aa',
         pose_loss=False,
+        main_loss='reproj',
         range=False,
         # deprecated entries
         lambda_=0.,
@@ -52,11 +53,22 @@ class NNOptimizer(BaseOptimizer):
         assert conf.learned_damping
         super()._init(conf)
 
+
+    def _forward(self, data: Dict):
+        return self._run(
+            data['p3D'], data['F_ref'], data['F_q'], data['T_init'],
+            data['camera'], data['mask'], data.get('W_ref_q'), data, data['scale'])
+
+
     def _run(self, p3D: Tensor, F_ref: Tensor, F_query: Tensor,
              T_init: Pose, camera: Camera, mask: Optional[Tensor] = None,
-             W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None):
+             W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None,
+             data=None,
+             scale=None):
 
         T = T_init
+        shift_gt = data['data']['shift_gt']
+        shift_range = data['data']['shift_range']
 
         J_scaling = None
         if self.conf.normalize_features:
@@ -65,6 +77,7 @@ class NNOptimizer(BaseOptimizer):
         failed = torch.full(T.shape, False, dtype=torch.bool, device=T.device)
 
         lambda_ = self.dampingnet()
+        shiftxyr = torch.zeros_like(shift_range)
 
         for i in range(self.conf.num_iters):
             res, valid, w_unc, F_ref2D, J = self.cost_fn.residual_jacobian(T, *args)
@@ -89,10 +102,11 @@ class NNOptimizer(BaseOptimizer):
             #     delta = delta * J_scaling
 
             # # solve the nn optimizer
-            delta = self.nnrefine(F_query, F_ref2D, p3D)
+            delta = self.nnrefine(F_query, F_ref2D, scale)
 
             if self.conf.pose_from == 'aa':
                 # compute the pose update
+                # how to rescale the feature?: TODO
                 dt, dw = delta.split([3, 3], dim=-1)
                 # dt, dw = delta.split([2, 1], dim=-1)
                 # fix z trans, roll and pitch
@@ -101,6 +115,10 @@ class NNOptimizer(BaseOptimizer):
                 dt = torch.cat([dt[:,0:2],zeros], dim=-1)
                 T_delta = Pose.from_aa(dw, dt)
             elif self.conf.pose_from == 'rt':
+                # rescaling
+                delta = delta * shift_range
+                shiftxyr += delta
+
                 dt, dw = delta.split([2, 1], dim=-1)
                 B = dw.size(0)
 
@@ -131,6 +149,7 @@ class NNOptimizer(BaseOptimizer):
             else:
                 T = T_delta @ T
 
+
             # self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
             #          valid=valid, w_unc=w_unc, w_loss=w_loss, H=H, J=J)
             self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
@@ -141,7 +160,7 @@ class NNOptimizer(BaseOptimizer):
         if failed.any():
             logger.debug('One batch element had too few valid points.')
 
-        return T, failed
+        return T, failed, shiftxyr
 
     # def _run(self, p3D: Tensor, F_ref: Tensor, F_query: Tensor,
     #          T_init: Pose, camera: Camera, mask: Optional[Tensor] = None,
@@ -224,17 +243,17 @@ class NNrefinev0_1(nn.Module):
         self.linear2 = nn.Sequential(nn.ReLU(inplace=True),
                                      nn.Linear(self.cin[2], self.cout))
 
-        self.linearp = nn.Sequential(nn.ReLU(inplace=True),
-                                     nn.Linear(3, self.cout),
-                                     nn.ReLU(inplace=True),
-                                     nn.Linear(self.cout, self.cout))
+        # self.linearp = nn.Sequential(nn.ReLU(inplace=False),
+        #                              nn.Linear(3, self.cout),
+        #                              nn.ReLU(inplace=True),
+        #                              nn.Linear(self.cout, self.cout))
 
 
         if self.args.pool == 'none':
             self.mapping = nn.Sequential(nn.ReLU(inplace=True),
-                                         nn.Linear(self.cout * 2, 256),
+                                         nn.Linear(self.cout * self.args.max_num_points3D, 1024),
                                          nn.ReLU(inplace=True),
-                                         nn.Linear(256, 32),
+                                         nn.Linear(1024, 32),
                                          nn.ReLU(inplace=True),
                                          nn.Linear(32, self.yout),
                                          nn.Tanh())
@@ -249,16 +268,16 @@ class NNrefinev0_1(nn.Module):
         #                                  nn.Tanh())
 
 
-    def forward(self, pred_feat, ref_feat, point, iter=0, level=0):
+    def forward(self, pred_feat, ref_feat, scale, iter=0, level=0):
 
         B, N, C = pred_feat.size()
 
-        # normalization
-        if self.args.norm == 'zsn':
-            pred_feat = (pred_feat - pred_feat.mean()) / (pred_feat.std() + 1e-6)
-            ref_feat = (ref_feat - ref_feat.mean()) / (ref_feat.std() + 1e-6)
-        else:
-            pass
+        # # normalization
+        # if self.args.norm == 'zsn':
+        #     pred_feat = (pred_feat - pred_feat.mean()) / (pred_feat.std() + 1e-6)
+        #     ref_feat = (ref_feat - ref_feat.mean()) / (ref_feat.std() + 1e-6)
+        # else:
+        #     pass
 
         if self.args.input == 'concat':
             r = torch.cat([pred_feat, ref_feat], dim=-1)
@@ -266,16 +285,16 @@ class NNrefinev0_1(nn.Module):
             r = pred_feat - ref_feat  # [B, C, H, W]
 
         B, N, C = r.shape
-        if C == self.cin[0]:
+        if 2-scale == 0:
             x = self.linear0(r)
-        elif C == self.cin[1]:
+        elif 2-scale == 1:
             x = self.linear1(r)
-        elif C == self.cin[2]:
+        elif 2-scale == 2:
             x = self.linear2(r)
 
-        pointfeat = self.linearp(point)
-        x = torch.cat([x, pointfeat], dim=2)
-        x = torch.max(x, 1, keepdim=True)[0]
+        # pointfeat = self.linearp(point)
+        # x = torch.cat([x, pointfeat], dim=2)
+        # x = torch.max(x, 1, keepdim=True)[0]
 
         if self.args.pool == 'none':
             x = x.view(B, -1)

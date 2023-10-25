@@ -34,6 +34,7 @@ model:
       type: constant
     input: res
     pose_loss: True
+    main_loss: 'reproj'
 train:
   seed: 0
   epochs: 200
