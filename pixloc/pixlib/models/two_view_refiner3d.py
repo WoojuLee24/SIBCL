@@ -46,6 +46,7 @@ class TwoViewRefiner3D(BaseModel):
             'name': 'nn_optimizer3d', # 'learned_optimizer', #'basic_optimizer',
             'input': 'res',
             'pose_loss': True,
+            'main_loss': 'reproj'
         },
         'duplicate_optimizer_per_scale': True,
         'success_thresh': 3,
@@ -97,6 +98,7 @@ class TwoViewRefiner3D(BaseModel):
         T_init = data['T_q2r_init']
         pred['T_q2r_init'] = []
         pred['T_q2r_opt'] = []
+        pred['shiftxyr'] = []
         pred['pose_loss'] = []
         for i in reversed(range(len(self.extractor.scales))):
             F_ref = pred['ref']['feature_maps'][i]
@@ -127,12 +129,13 @@ class TwoViewRefiner3D(BaseModel):
                 F_q = (F_q - F_q.mean(dim=2, keepdim=True)) / (F_q.std(dim=2, keepdim=True) + 1e-6)
                 F_ref = (F_ref - F_ref.mean(dim=1, keepdim=True)) / (F_ref.std(dim=1, keepdim=True) + 1e-6)
 
-            T_opt, failed = opt(dict(
+            T_opt, failed, shiftxyr = opt(dict(
                 p3D=p3D_query, F_ref=F_ref, F_q=F_q, T_init=T_init, camera=cam_ref,
-                mask=mask, W_ref_q=W_ref_q, scale=i))
+                mask=mask, W_ref_q=W_ref_q, data=data, scale=i))
 
             pred['T_q2r_init'].append(T_init)
             pred['T_q2r_opt'].append(T_opt)
+            pred['shiftxyr'].append(shiftxyr)
             T_init = T_opt.detach()
 
             # query & reprojection GT error, for query unet back propogate  # PAB Loss
@@ -163,6 +166,51 @@ class TwoViewRefiner3D(BaseModel):
         self.extractor.add_grd_confidence()
 
     def loss(self, pred, data):
+        if self.conf.optimizer.main_loss == 'rt':
+            losses = self.rt_loss(pred, data)
+        else:
+            losses = self.reproj_loss(pred, data)  # default = reproj
+
+        return losses
+
+    def rt_loss(self, pred, data):
+        # TODO:
+        cam_ref = data['ref']['camera']
+        points_3d = data['query']['points3D']
+        shift_gt = data['shift_gt']
+        shift_init = torch.zeros_like(shift_gt)
+
+        def shift_error(shift):
+            err = torch.sum((shift - shift_gt) ** 2, dim=-1)
+            # err = scaled_barron(1., 2.)(err)[0] / 4
+            err = err.mean(dim=0, keepdim=True)
+            return err
+
+        err_init = shift_error(shift_init)
+        num_scales = len(self.extractor.scales)
+        # success = None
+        losses = {'total': 0.}
+
+        for i, shift in enumerate(pred['shiftxyr']):
+            err = shift_error(shift)
+            loss = err / num_scales
+            # if i > 0:
+            #     loss = loss * success.float()
+            # thresh = self.conf.success_thresh * self.extractor.scales[-1 - i]
+            # success = err < thresh
+            losses[f'shift_error/{i}'] = err
+            losses['total'] += loss
+
+        losses['shift_error'] = err
+        losses['shift_error/init'] = err_init
+
+        with torch.no_grad():
+            reproj_losses = self.reproj_loss(pred, data)
+        losses['reprojection_error'] = reproj_losses['reprojection_error']
+
+        return losses
+
+    def reproj_loss(self, pred, data):
         cam_ref = data['ref']['camera']
         points_3d = data['query']['points3D']
 
@@ -175,8 +223,8 @@ class TwoViewRefiner3D(BaseModel):
 
         def reprojection_error(T_q2r):
             p2D_r, _ = project(T_q2r)
-            err = torch.sum((p2D_r_gt - p2D_r)**2, dim=-1)
-            err = scaled_barron(1., 2.)(err)[0]/4
+            err = torch.sum((p2D_r_gt - p2D_r) ** 2, dim=-1)
+            err = scaled_barron(1., 2.)(err)[0] / 4
             err = masked_mean(err, mask, -1)
             return err
 
@@ -192,16 +240,17 @@ class TwoViewRefiner3D(BaseModel):
             loss = err / num_scales
             if i > 0:
                 loss = loss * success.float()
-            thresh = self.conf.success_thresh * self.extractor.scales[-1-i]
+            thresh = self.conf.success_thresh * self.extractor.scales[-1 - i]
             success = err < thresh
             losses[f'reprojection_error/{i}'] = err
             losses['total'] += loss
 
             # query & reprojection GT error, for query unet back propogate
             if self.conf.optimizer.pose_loss:
-                losses['pose_loss'] += pred['pose_loss'][i]/ num_scales
+                losses['pose_loss'] += pred['pose_loss'][i] / num_scales
                 poss_loss_weight = get_weight_from_reproloss(err_init)
-                losses['total'] += (poss_loss_weight * pred['pose_loss'][i]/ num_scales).clamp(max=self.conf.clamp_error/num_scales)
+                losses['total'] += (poss_loss_weight * pred['pose_loss'][i] / num_scales).clamp(
+                    max=self.conf.clamp_error / num_scales)
 
         losses['reprojection_error'] = err
         losses['reprojection_error/init'] = err_init

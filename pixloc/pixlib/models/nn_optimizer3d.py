@@ -39,6 +39,7 @@ class NNOptimizer3D(BaseOptimizer):
         norm='none',
         pose_from='aa',
         pose_loss=False,
+        main_loss='reproj',
         range=False,
         linearp=False,
         # deprecated entries
@@ -53,12 +54,22 @@ class NNOptimizer3D(BaseOptimizer):
         assert conf.learned_damping
         super()._init(conf)
 
+
+    def _forward(self, data: Dict):
+        return self._run(
+            data['p3D'], data['F_ref'], data['F_q'], data['T_init'],
+            data['camera'], data['mask'], data.get('W_ref_q'), data, data['scale'])
+
+
     def _run(self, p3D: Tensor, F_ref: Tensor, F_query: Tensor,
              T_init: Pose, camera: Camera, mask: Optional[Tensor] = None,
              W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None,
+             data=None,
              scale=None):
 
         T = T_init
+        shift_gt = data['data']['shift_gt']
+        shift_range = data['data']['shift_range']
 
         J_scaling = None
         if self.conf.normalize_features:
@@ -67,6 +78,7 @@ class NNOptimizer3D(BaseOptimizer):
         failed = torch.full(T.shape, False, dtype=torch.bool, device=T.device)
 
         lambda_ = self.dampingnet()
+        shiftxyr = torch.zeros_like(shift_range)
 
         for i in range(self.conf.num_iters):
             res, valid, w_unc, F_ref2D, J = self.cost_fn.residual_jacobian(T, *args)
@@ -104,6 +116,10 @@ class NNOptimizer3D(BaseOptimizer):
                 dt = torch.cat([dt[:,0:2],zeros], dim=-1)
                 T_delta = Pose.from_aa(dw, dt)
             elif self.conf.pose_from == 'rt':
+                # rescaling
+                delta = delta * shift_range
+                shiftxyr += delta
+
                 dt, dw = delta.split([2, 1], dim=-1)
                 B = dw.size(0)
 
@@ -144,7 +160,7 @@ class NNOptimizer3D(BaseOptimizer):
         if failed.any():
             logger.debug('One batch element had too few valid points.')
 
-        return T, failed
+        return T, failed, shiftxyr
 
 
 class NNrefinev0_1(nn.Module):
