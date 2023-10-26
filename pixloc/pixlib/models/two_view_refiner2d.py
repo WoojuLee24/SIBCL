@@ -111,11 +111,15 @@ class TwoViewRefiner2D(BaseModel):
             cam_q = pred['query']['camera_pyr'][i]
 
             p2D_query, visible = cam_q.world2image(data['query']['T_w2cam']*p3D_query)
-            # F_q, mask, _ = opt.interpolator(F_q, p2D_query)
-            # TODO: F_q: BEV by p2D_query
-
+            F_q_key, mask, _ = opt.interpolator(F_q, p2D_query)
             mask &= visible
 
+            # TODO: F_q: BEV by p2D_query
+            # input: F_ref (2D), F_q (2D), p3D, T_q2r (estimate)
+            # step 1: p3D -> p3D_query -> p2D_query, p3D --(T_q2r)> p3D_ref -> p2D_ref
+            # step 2: F_ref = F_ref[p2D_ref], or F_ref, or concat
+            # step 3: p2D_query and F_q -> F_q_key, //  F_q2r[p2D_ref]=F_q_key
+            # step 4: F_ref and F_q2r -> T
 
             W_q = pred['query']['confidences'][i]
             W_q, _, _ = opt.interpolator(W_q, p2D_query)
@@ -131,7 +135,7 @@ class TwoViewRefiner2D(BaseModel):
 
             T_opt, failed = opt(dict(
                 p3D=p3D_query, F_ref=F_ref, F_q=F_q, T_init=T_init, camera=cam_ref,
-                mask=mask, W_ref_q=W_ref_q))
+                mask=mask, W_ref_q=W_ref_q, p2D=p2D_query))
 
             pred['T_q2r_init'].append(T_init)
             pred['T_q2r_opt'].append(T_opt)

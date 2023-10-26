@@ -40,6 +40,7 @@ class NNOptimizer2D(BaseOptimizer):
         pose_from='aa',
         pose_loss=False,
         range=False,
+        ref_key=True,
         # deprecated entries
         lambda_=0.,
         learned_damping=True,
@@ -52,9 +53,16 @@ class NNOptimizer2D(BaseOptimizer):
         assert conf.learned_damping
         super()._init(conf)
 
+    def _forward(self, data: Dict):
+        return self._run(
+            data['p3D'], data['F_ref'], data['F_q'], data['T_init'],
+            data['camera'], data['mask'], data.get('W_ref_q'), data['p2D'])
+
+
     def _run(self, p3D: Tensor, F_ref: Tensor, F_query: Tensor,
              T_init: Pose, camera: Camera, mask: Optional[Tensor] = None,
-             W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None):
+             W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None,
+             p2D = None):
 
         T = T_init
 
@@ -67,20 +75,20 @@ class NNOptimizer2D(BaseOptimizer):
         lambda_ = self.dampingnet()
 
         for i in range(self.conf.num_iters):
-            res, valid, w_unc, F_ref2D, J = self.cost_fn.residual_jacobian(T, *args)
-
-            if mask is not None:
-                valid &= mask
-            failed = failed | (valid.long().sum(-1) < 10)  # too few points
-
-            # compute the cost and aggregate the weights
-            cost = (res**2).sum(-1)
-            cost, w_loss, _ = self.loss_fn(cost)
-            weights = w_loss * valid.float()
-            if w_unc is not None:
-                weights = weights*w_unc
-            if self.conf.jacobi_scaling:
-                J, J_scaling = self.J_scaling(J, J_scaling, valid)
+            # res, valid, w_unc, F_ref2D, J = self.cost_fn.residual_jacobian(T, *args)
+            #
+            # if mask is not None:
+            #     valid &= mask
+            # failed = failed | (valid.long().sum(-1) < 10)  # too few points
+            #
+            # # compute the cost and aggregate the weights
+            # cost = (res**2).sum(-1)
+            # cost, w_loss, _ = self.loss_fn(cost)
+            # weights = w_loss * valid.float()
+            # if w_unc is not None:
+            #     weights = weights*w_unc
+            # if self.conf.jacobi_scaling:
+            #     J, J_scaling = self.J_scaling(J, J_scaling, valid)
 
             # # solve the linear system
             # g, H = self.build_system(J, res, weights)
@@ -88,8 +96,33 @@ class NNOptimizer2D(BaseOptimizer):
             # if self.conf.jacobi_scaling:
             #     delta = delta * J_scaling
 
+
+            p3D_r = T * p3D  # q_3d to q2r_3d
+            p2D_r, visible = camera.world2image(p3D_r)  # q2r_3d to q2r_2d
+            b, c, h, w = F_ref.size()
+            p2D_r_int = torch.round(p2D_r).long()
+
+            b, c, h, w = F_query.size()
+            p2D_int = torch.round(p2D).long()
+            F_q2r = torch.zeros_like(F_ref)
+
+            F_query_key, valid, gradients = self.cost_fn.interpolator(F_query,
+                                                                      p2D,
+                                                                      return_gradients=True)  # get key feature from p3D
+            key = F_q2r[0, :, p2D_r_int[0, :, 0], p2D_r_int[0, :, 1]]
+
+            F_q2r[p2D_r_int] = F_query[p2D_int] # q2r_2d from query feature
+
+            if self.conf.ref_key == True:
+                F_ref_key, valid, gradients = self.cost_fn.interpolator(F_ref,
+                                                                        p2D_r,
+                                                                        return_gradients=True)  # get key feature from p3D
+                F_ref2 = torch.zeros_like(F_ref)
+                F_ref2[p2D_r_int] = F_ref[p2D_r_int]
+
+
             # # solve the nn optimizer
-            delta = self.nnrefine(F_query, F_ref2D, p3D)
+            delta = self.nnrefine(F_query, F_ref2, p3D)
 
             if self.conf.pose_from == 'aa':
                 # compute the pose update
@@ -133,8 +166,9 @@ class NNOptimizer2D(BaseOptimizer):
 
             # self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
             #          valid=valid, w_unc=w_unc, w_loss=w_loss, H=H, J=J)
-            self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
-                     valid=valid, w_unc=w_unc, w_loss=w_loss, J=J)
+            # self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
+            #          valid=valid, w_unc=w_unc, w_loss=w_loss, J=J)
+            self.log(i=i, T_init=T_init, T=T, T_delta=T_delta) #valid=valid)
             # if self.early_stop(i=i, T_delta=T_delta, grad=g, cost=cost): # TODO
             #     break
 
@@ -218,47 +252,25 @@ class NNrefinev0_1(nn.Module):
             self.yout = 3
 
         self.linear0 = nn.Sequential(nn.ReLU(inplace=True),
-                                     nn.Linear(self.cin[0], self.cout))
+                                     nn.Conv2d(self.cin[0], self.cout, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)))
         self.linear1 = nn.Sequential(nn.ReLU(inplace=True),
-                                     nn.Linear(self.cin[1], self.cout))
+                                     nn.Conv2d(self.cin[1], self.cout, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)))
         self.linear2 = nn.Sequential(nn.ReLU(inplace=True),
-                                     nn.Linear(self.cin[2], self.cout))
+                                     nn.Conv2d(self.cin[2], self.cout, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)))
 
-        self.linearp = nn.Sequential(nn.ReLU(inplace=True),
-                                     nn.Linear(3, self.cout),
-                                     nn.ReLU(inplace=True),
-                                     nn.Linear(self.cout, self.cout))
-
-
-        if self.args.pool == 'none':
+        if self.args.pool == 'aap2':
+            self.pool = nn.AdaptiveAvgPool2d((16, 16))
             self.mapping = nn.Sequential(nn.ReLU(inplace=True),
-                                         nn.Linear(self.cout * 2, 256),
+                                         nn.Linear(self.cout * 16 * 16, 1024),
                                          nn.ReLU(inplace=True),
-                                         nn.Linear(256, 32),
+                                         nn.Linear(1024, 32),
                                          nn.ReLU(inplace=True),
                                          nn.Linear(32, self.yout),
                                          nn.Tanh())
-        # elif self.args.pool == 'aap2':
-        #     self.pool = nn.AdaptiveAvgPool1d(4096 // 64)
-        #     self.mapping = nn.Sequential(nn.ReLU(inplace=True),
-        #                                  nn.Linear(4096 // 64, 1024),
-        #                                  nn.ReLU(inplace=True),
-        #                                  nn.Linear(1024, 32),
-        #                                  nn.ReLU(inplace=True),
-        #                                  nn.Linear(32, 3),
-        #                                  nn.Tanh())
 
-
-    def forward(self, pred_feat, ref_feat, point, iter=0, level=0):
+    def forward(self, pred_feat, ref_feat, point, scale=0, iter=0, level=0):
 
         B, N, C = pred_feat.size()
-
-        # normalization
-        if self.args.norm == 'zsn':
-            pred_feat = (pred_feat - pred_feat.mean()) / (pred_feat.std() + 1e-6)
-            ref_feat = (ref_feat - ref_feat.mean()) / (ref_feat.std() + 1e-6)
-        else:
-            pass
 
         if self.args.input == 'concat':
             r = torch.cat([pred_feat, ref_feat], dim=-1)
@@ -266,16 +278,12 @@ class NNrefinev0_1(nn.Module):
             r = pred_feat - ref_feat  # [B, C, H, W]
 
         B, N, C = r.shape
-        if C == self.cin[0]:
+        if 2-scale == 0:
             x = self.linear0(r)
-        elif C == self.cin[1]:
+        elif 2-scale == 1:
             x = self.linear1(r)
-        elif C == self.cin[2]:
+        elif 2-scale == 2:
             x = self.linear2(r)
-
-        pointfeat = self.linearp(point)
-        x = torch.cat([x, pointfeat], dim=2)
-        x = torch.max(x, 1, keepdim=True)[0]
 
         if self.args.pool == 'none':
             x = x.view(B, -1)
