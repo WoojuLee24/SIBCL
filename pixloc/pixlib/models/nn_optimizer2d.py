@@ -118,7 +118,7 @@ class NNOptimizer2D(BaseOptimizer):
             p2D_r_int = p2D_r_int.view(-1, 2)
             xidx, yidx = p2D_r_int[:, 0], p2D_r_int[:, 1]
             bidx = torch.repeat_interleave(torch.arange(B), N, dim=0)
-            F_q2r[bidx, :, yidx, xidx] = F_query_key.view(-1, C)
+            F_q2r[bidx, :, yidx, xidx] = F_query_key.contiguous().view(-1, C)
             F_q2r = F_q2r.contiguous()
 
             if self.conf.ref_key == True:
