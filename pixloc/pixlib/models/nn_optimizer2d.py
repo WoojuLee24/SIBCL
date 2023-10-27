@@ -40,7 +40,7 @@ class NNOptimizer2D(BaseOptimizer):
         pose_from='aa',
         pose_loss=False,
         range=False,
-        ref_key=True,
+        ref_key=False,
         # deprecated entries
         lambda_=0.,
         learned_damping=True,
@@ -56,13 +56,14 @@ class NNOptimizer2D(BaseOptimizer):
     def _forward(self, data: Dict):
         return self._run(
             data['p3D'], data['F_ref'], data['F_q'], data['T_init'],
-            data['camera'], data['mask'], data.get('W_ref_q'), data['p2D'])
+            data['camera'], data['mask'], data.get('W_ref_q'), data['p2D'], data['scale'])
 
 
     def _run(self, p3D: Tensor, F_ref: Tensor, F_query: Tensor,
              T_init: Pose, camera: Camera, mask: Optional[Tensor] = None,
              W_ref_query: Optional[Tuple[Tensor, Tensor, int]] = None,
-             p2D = None):
+             p2D = None,
+             scale = None):
 
         T = T_init
 
@@ -102,27 +103,47 @@ class NNOptimizer2D(BaseOptimizer):
             b, c, h, w = F_ref.size()
             p2D_r_int = torch.round(p2D_r).long()
 
-            b, c, h, w = F_query.size()
-            p2D_int = torch.round(p2D).long()
+            B, C, H, W= F_query.size()
+            # p2D_int = torch.round(p2D).long()
             F_q2r = torch.zeros_like(F_ref)
 
             F_query_key, valid, gradients = self.cost_fn.interpolator(F_query,
                                                                       p2D,
                                                                       return_gradients=True)  # get key feature from p3D
-            key = F_q2r[0, :, p2D_r_int[0, :, 0], p2D_r_int[0, :, 1]]
 
-            F_q2r[p2D_r_int] = F_query[p2D_int] # q2r_2d from query feature
+            # F_q2r[:, :, p2D_r_int[0, :, 0], p2D_r_int[0, :, 1]] (1, 128, 1024)
+            # TODO: F_q2r[p2D_r_int] = F_query[p2D_int] # q2r_2d from query feature
+            # get batched_index
+            B, N, _ = p2D_r_int.size()
+            p2D_r_int = p2D_r_int.view(-1, 2)
+            xidx, yidx = p2D_r_int[:, 0], p2D_r_int[:, 1]
+            bidx = torch.repeat_interleave(torch.arange(B), N, dim=0)
+            F_q2r[bidx, :, yidx, xidx] = F_query_key.view(-1, C)
+            F_q2r = F_q2r.contiguous()
 
             if self.conf.ref_key == True:
-                F_ref_key, valid, gradients = self.cost_fn.interpolator(F_ref,
-                                                                        p2D_r,
-                                                                        return_gradients=True)  # get key feature from p3D
-                F_ref2 = torch.zeros_like(F_ref)
-                F_ref2[p2D_r_int] = F_ref[p2D_r_int]
+                # F_ref_key, valid, gradients = self.cost_fn.interpolator(F_ref,
+                #                                                         p2D_r,
+                #                                                         return_gradients=True)  # get key feature from p3D
+                F_ref_key = torch.zeros_like(F_ref)
+                F_ref_key[bidx, :, yidx, xidx] = F_ref[bidx, :, yidx, xidx]
+                F_ref_key = F_ref_key.contiguous()
+            else:
+                F_ref_key = F_ref
 
+            # # DEBUG
+            # from pixloc.visualization.viz_2d import imsave
+            # F_ref_key_mean = F_ref_key.mean(dim=1)
+            # F_q2r_mean = F_q2r.mean(dim=1)
+            # F_ref_mean = F_ref.mean(dim=1)
+            # F_query_mean = F_query.mean(dim=1)
+            # imsave(F_ref_mean, "nn2d", "F_ref")
+            # imsave(F_query_mean, "nn2d", "F_query")
+            # imsave(F_ref_key_mean, "nn2d", "F_ref_key")
+            # imsave(F_q2r_mean, "nn2d", "F_q2r")
 
             # # solve the nn optimizer
-            delta = self.nnrefine(F_query, F_ref2, p3D)
+            delta = self.nnrefine(F_q2r, F_ref_key, p3D, scale)
 
             if self.conf.pose_from == 'aa':
                 # compute the pose update
@@ -259,25 +280,25 @@ class NNrefinev0_1(nn.Module):
                                      nn.Conv2d(self.cin[2], self.cout, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1)))
 
         if self.args.pool == 'aap2':
-            self.pool = nn.AdaptiveAvgPool2d((16, 16))
+            self.pool = nn.AdaptiveAvgPool2d((20, 20))
             self.mapping = nn.Sequential(nn.ReLU(inplace=True),
-                                         nn.Linear(self.cout * 16 * 16, 1024),
+                                         nn.Linear(self.cout * 20 * 20, 2048),
                                          nn.ReLU(inplace=True),
-                                         nn.Linear(1024, 32),
+                                         nn.Linear(2048, 32),
                                          nn.ReLU(inplace=True),
                                          nn.Linear(32, self.yout),
                                          nn.Tanh())
 
-    def forward(self, pred_feat, ref_feat, point, scale=0, iter=0, level=0):
 
-        B, N, C = pred_feat.size()
+    def forward(self, query_feat, ref_feat, point, scale=0, iter=0, level=0):
+
+        B, C, H, W = query_feat.size()
 
         if self.args.input == 'concat':
-            r = torch.cat([pred_feat, ref_feat], dim=-1)
+            r = torch.cat([query_feat, ref_feat], dim=1)
         else:
-            r = pred_feat - ref_feat  # [B, C, H, W]
+            r = query_feat - ref_feat  # [B, C, H, W]
 
-        B, N, C = r.shape
         if 2-scale == 0:
             x = self.linear0(r)
         elif 2-scale == 1:
@@ -288,5 +309,9 @@ class NNrefinev0_1(nn.Module):
         if self.args.pool == 'none':
             x = x.view(B, -1)
             y = self.mapping(x)  # [B, 3]
+        elif 'aap' in self.args.pool:
+            x = self.pool(x)
+            x = x.view(B, -1)
+            y = self.mapping(x)
 
         return y

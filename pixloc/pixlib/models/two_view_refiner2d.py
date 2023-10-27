@@ -135,7 +135,7 @@ class TwoViewRefiner2D(BaseModel):
 
             T_opt, failed = opt(dict(
                 p3D=p3D_query, F_ref=F_ref, F_q=F_q, T_init=T_init, camera=cam_ref,
-                mask=mask, W_ref_q=W_ref_q, p2D=p2D_query))
+                mask=mask, W_ref_q=W_ref_q, p2D=p2D_query, scale=i))
 
             pred['T_q2r_init'].append(T_init)
             pred['T_q2r_opt'].append(T_opt)

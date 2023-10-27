@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 import numpy as np
 import torch
+import os
+from PIL import Image
 
 
 def cm_RdGn(x):
@@ -167,3 +169,21 @@ def features_to_RGB(*Fs, skip=1):
         Fs.append(F)
     assert flatten.shape[0] == 0
     return Fs
+
+
+def imsave(image, folder, name):
+    # save image with PIL, plt package
+    root = f"/ws/external/visualizations/{folder}"
+    os.makedirs(root, exist_ok=True)
+
+    if isinstance(image, Image.Image):
+        image.save(root + f'/{name}.png')
+        return
+    image = (image - image.min()) / (image.max() - image.min())
+    image = image.cpu().detach().numpy()
+    image = (image * 255).astype(np.uint8)
+    image = np.transpose(image, (1, 2, 0))
+    if image.shape[2] == 1:
+        plt.imsave(root + f'/{name}.png', np.asarray(image)[:, :, 0], cmap='gray')
+    else:
+        plt.imsave(root + f'/{name}.png', np.asarray(image))
