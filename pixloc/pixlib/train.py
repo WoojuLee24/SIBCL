@@ -342,7 +342,7 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
     optimizer = optimizer_fn(
             lr_params, lr=conf.train.lr, **conf.train.optimizer_options)
 
-    lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, 1)
+    # lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(optimizer, 1)
 
     # def lr_fn(it):  # noqa: E306
     #     if conf.train.lr_schedule.type is None:
@@ -413,7 +413,7 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
                 loss.backward()
                 #logger.info(f'after backward, time{time.time()-tick}')
                 optimizer.step()
-                lr_scheduler.step()
+                # lr_scheduler.step()
                 if conf.train.get('clip_grad', None):
                     if it % conf.train.log_every_iter == 0:
                         grads = [p.grad.data.abs().reshape(-1)
@@ -484,6 +484,8 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
 
             if stop:
                 break
+
+        lr_scheduler.step()
 
         if rank == 0:
             state = (model.module if args.distributed else model).state_dict()
