@@ -81,7 +81,9 @@ class NNOptimizer3D(BaseOptimizer):
         shiftxyr = torch.zeros_like(shift_range)
 
         for i in range(self.conf.num_iters):
-            res, valid, w_unc, F_ref2D, J = self.cost_fn.residual_jacobian(T, *args)
+            # res, valid, w_unc, F_ref2D, J = self.cost_fn.residual_jacobian(T, *args)
+            res, valid, w_unc, F_ref2D, info = self.cost_fn.residuals(T, *args)
+
             p3D_ref = T * p3D
 
             if mask is not None:
@@ -94,8 +96,8 @@ class NNOptimizer3D(BaseOptimizer):
             weights = w_loss * valid.float()
             if w_unc is not None:
                 weights = weights*w_unc
-            if self.conf.jacobi_scaling:
-                J, J_scaling = self.J_scaling(J, J_scaling, valid)
+            # if self.conf.jacobi_scaling:
+            #     J, J_scaling = self.J_scaling(J, J_scaling, valid)
 
             # # solve the linear system
             # g, H = self.build_system(J, res, weights)
@@ -153,7 +155,7 @@ class NNOptimizer3D(BaseOptimizer):
             # self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
             #          valid=valid, w_unc=w_unc, w_loss=w_loss, H=H, J=J)
             self.log(i=i, T_init=T_init, T=T, T_delta=T_delta, cost=cost,
-                     valid=valid, w_unc=w_unc, w_loss=w_loss, J=J)
+                     valid=valid, w_unc=w_unc, w_loss=w_loss) # J=J)
             # if self.early_stop(i=i, T_delta=T_delta, grad=g, cost=cost): # TODO
             #     break
 

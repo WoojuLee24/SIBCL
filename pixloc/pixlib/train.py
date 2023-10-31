@@ -485,8 +485,6 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
             if stop:
                 break
 
-        lr_scheduler.step()
-
         if rank == 0:
             state = (model.module if args.distributed else model).state_dict()
             checkpoint = {
@@ -512,6 +510,7 @@ def training(rank, conf, output_dir, args, wandb_logger=None):
             del checkpoint
 
         epoch += 1
+        lr_scheduler.step()
 
     # test
     test(model, test_loader, wandb_logger=wandb_logger)
